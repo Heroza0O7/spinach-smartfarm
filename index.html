@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบตรวจวัดผักโขม & AI</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f4f7f6; font-family: 'Sarabun', sans-serif; }
+        .card-custom { border-radius: 15px; border: none; box-shadow: 0 4px 6px rgba(0,0,0,0.08); }
+        .metric-title { font-size: 0.85rem; color: #6c757d; }
+        .metric-value { font-size: 1.8rem; font-weight: bold; }
+        #ai-result { background: #ffffff; border-radius: 10px; padding: 15px; min-height: 120px; white-space: pre-line; }
+    </style>
+</head>
+<body>
+    <div class="container py-4">
+        <h2 class="mb-4 text-center">🥬 ระบบตรวจวัด pH & ความชื้นดิน (Spinach Smart Farm)</h2>
+
+        <!-- Dashboard Metrics -->
+        <div class="row g-3 mb-4">
+            <div class="col-md-3">
+                <div class="card card-custom p-3 text-center">
+                    <div class="metric-title">🌱 ค่า pH ในดิน</div>
+                    <div class="metric-value text-success" id="ph-val">--</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card card-custom p-3 text-center">
+                    <div class="metric-title">💧 ความชื้นในดิน</div>
+                    <div class="metric-value text-primary" id="moisture-val">--</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card card-custom p-3 text-center">
+                    <div class="metric-title">🌤 สภาพอากาศ / โอกาสฝน</div>
+                    <div class="metric-value text-warning" style="font-size: 1.1rem; line-height: 2.2rem;" id="weather-val">--</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card card-custom p-3 text-center">
+                    <div class="metric-title">🕒 อัปเดตล่าสุด</div>
+                    <div class="metric-value text-dark" style="font-size: 1.1rem; line-height: 2.2rem;" id="time-val">--</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI Stage Control -->
+        <div class="card card-custom p-4">
+            <h4 class="mb-3">🤖 AI วิเคราะห์คำแนะนำตามระยะการเติบโต</h4>
+
+            <div class="row g-3 mb-3">
+                <div class="col-md-6">
+                    <label class="form-label fw-bold">เลือกระยะการเจริญเติบโตของผักโขม:</label>
+                    <select class="form-select" id="stage-select">
+                        <option value="seedling">🌱 ระยะต้นกล้า (1-2 สัปดาห์)</option>
+                        <option value="growth" selected>🌿 ระยะเร่งโต / ใบแน่น (3-4 สัปดาห์)</option>
+                        <option value="harvest">🥬 ระยะใกล้เก็บเกี่ยว (5 สัปดาห์ขึ้นไป)</option>
+                    </select>
+                </div>
+            </div>
+
+            <button class="btn btn-primary btn-lg mb-3" onclick="analyzeAI()" id="btn-ai">🚀 ให้ AI วิเคราะห์ทันที</button>
+
+            <div class="border p-3" id="ai-result">เลือกระยะของผักโขม แล้วกดปุ่มด้านบนเพื่อให้ AI ประมวลผล...</div>
+        </div>
+    </div>
+
+    <script>
+        let userCoords = null;
+
+        // ขอตำแหน่งจากเบราว์เซอร์ของผู้ใช้ (ต้องเป็น HTTPS ซึ่ง Render รองรับอยู่แล้ว)
+        function getLocation() {
+            return new Promise((resolve) => {
+                if (!navigator.geolocation) return resolve(null);
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+                    () => resolve(null), // ผู้ใช้ปฏิเสธ หรือเกิดข้อผิดพลาด -> ใช้ค่าเริ่มต้นจากเซิร์ฟเวอร์
+                    { timeout: 8000, maximumAge: 600000 }
+                );
+            });
+        }
+
+        function locQuery() {
+            return userCoords ? `lat=${userCoords.lat}&lon=${userCoords.lon}` : '';
+        }
+
+        async function fetchSensorData() {
+            try {
+                const res = await fetch(`/api/data?${locQuery()}`);
+                const result = await res.json();
+                if (result.status === 'success') {
+                    document.getElementById('ph-val').innerText = result.data.ph.toFixed(2) + ' pH';
+                    document.getElementById('moisture-val').innerText = result.data.moisture.toFixed(1) + ' %';
+                    document.getElementById('time-val').innerText = result.data.timestamp;
+
+                    const w = result.data.weather;
+                    document.getElementById('weather-val').innerText = `📍 ${w.city} | ${w.temp}°C | ฝน ${w.rain_prob_today}%`;
+                }
+            } catch (e) {
+                console.error("Error fetching sensor data:", e);
+            }
+        }
+
+        async function analyzeAI() {
+            const btn = document.getElementById('btn-ai');
+            const resultDiv = document.getElementById('ai-result');
+            const stage = document.getElementById('stage-select').value;
+
+            btn.disabled = true;
+            btn.innerText = '⏳ AI กำลังประมวลผล...';
+            resultDiv.innerText = '';
+
+            try {
+                const response = await fetch(`/api/analyze-stream?stage=${stage}&${locQuery()}`);
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    resultDiv.innerText += decoder.decode(value, { stream: true });
+                }
+            } catch (e) {
+                resultDiv.innerText = 'เกิดข้อผิดพลาดในการเชื่อมต่อกับ AI';
+            } finally {
+                btn.disabled = false;
+                btn.innerText = '🚀 ให้ AI วิเคราะห์ทันที';
+            }
+        }
+
+        // เริ่มทำงาน: ขอตำแหน่งก่อน แล้วค่อยโหลดข้อมูล
+        (async () => {
+            document.getElementById('weather-val').innerText = '📍 กำลังหาตำแหน่ง...';
+            userCoords = await getLocation();
+            fetchSensorData();
+            setInterval(fetchSensorData, 10000);
+        })();
+    </script>
+</body>
+</html>
